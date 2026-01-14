@@ -1,0 +1,182 @@
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/loaders/GLTFLoader.js';
+
+window.onload = () => {
+    const canvas = document.getElementById("glCanvas");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 2, 5);
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 5);
+    scene.add(directionalLight);
+
+    // ================================
+    // FLOOR
+    // ================================
+    const scale = 2 / 3;
+    const floorGeometry = new THREE.PlaneGeometry(20*scale, 20*scale);
+    const floorMaterial = new THREE.MeshLambertMaterial({ color: 0x808080 });
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    // ================================
+    // LOAD RPG.GLb MODEL
+    // ================================
+    const loader = new GLTFLoader();
+    let rpgModel;
+
+    loader.load('rpg.glb', (gltf) => {
+        rpgModel = gltf.scene;
+        rpgModel.position.set(0, 0, 0);  // Adjust position if needed
+        rpgModel.scale.set(1,1,1);        // Adjust scale if needed
+        scene.add(rpgModel);
+    }, undefined, (error) => {
+        console.error("Error loading rpg.glb:", error);
+    });
+
+    // ================================
+    // UI CANVAS SETUP
+    // ================================
+    const uiCanvas = document.createElement("canvas");
+    uiCanvas.id = "uiCanvas";
+    uiCanvas.style.position = "absolute";
+    uiCanvas.style.left = "0";
+    uiCanvas.style.top = "0";
+    uiCanvas.style.pointerEvents = "none";
+    uiCanvas.width = window.innerWidth;
+    uiCanvas.height = window.innerHeight;
+    document.body.appendChild(uiCanvas);
+    const ui = uiCanvas.getContext("2d");
+
+    let tabletHeight = 550;
+    let tabletY = uiCanvas.height;
+    let targetTabletY = uiCanvas.height;
+    let isDraggingUI = false;
+    let swipeStartY = 0;
+    let tabletOpen = false;
+
+    let lastFlashTime = 0;
+    let flashCooldown = 500;
+    let tabletCooldownTime = 0;
+    const tabletCooldownDuration = 200;
+
+    let clickCount = 0;
+    let clickTimer = null;
+    const tripleClickDelay = 300;
+
+    window.addEventListener("mousedown", e => {
+        if (e.button === 0) {
+            isDraggingUI = true;
+            swipeStartY = e.clientY;
+
+            clickCount++;
+            if (clickTimer) clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => { clickCount = 0; }, tripleClickDelay);
+
+            const now = performance.now();
+            if (clickCount >= 3 && !tabletOpen && (now - tabletCooldownTime >= tabletCooldownDuration) && (now - lastFlashTime >= flashCooldown)) {
+                lastFlashTime = now;
+                clickCount = 0;
+                flickStage = 1;
+                flickStart = now;
+            }
+        }
+    });
+    window.addEventListener("mouseup", () => { isDraggingUI = false; });
+    window.addEventListener("mousemove", e => {
+        if (!isDraggingUI) return;
+        const dy = e.clientY - swipeStartY;
+        const now = performance.now();
+        if (dy < -50 && now - lastFlashTime >= flashCooldown) { targetTabletY = 50; tabletOpen = true; }
+        if (dy > 50) { targetTabletY = uiCanvas.height; tabletOpen = false; tabletCooldownTime = now; }
+    });
+
+    function drawTabletUI(){
+        ui.clearRect(0,0,uiCanvas.width,uiCanvas.height);
+        tabletY += (targetTabletY - tabletY) * 0.15;
+        ui.fillStyle = "rgba(0,0,0,0.85)";
+        ui.fillRect(50, tabletY, uiCanvas.width-100, tabletHeight);
+        ui.fillStyle = "white";
+        ui.font = "20px Arial";
+        ui.fillText("Tablet UI", 80, tabletY + 40);
+    }
+
+    // ================================
+    // CAMERA EDGE ROTATION
+    // ================================
+    let camYaw = 0;
+    const maxSpeedX = 1.5;
+    const deadzone = 300;
+    let cursorX = window.innerWidth / 2;
+    window.addEventListener("mousemove", e => { cursorX = e.clientX; });
+
+    function applyCameraRotation(){
+        const w = window.innerWidth;
+        const cx = w/2;
+        const dx = cursorX - cx;
+        let rotX = 0;
+        if (Math.abs(dx) > deadzone){
+            const t = (Math.abs(dx)-deadzone)/(cx-deadzone);
+            rotX = (dx>0?1:-1)*Math.min(t*maxSpeedX,maxSpeedX);
+        }
+        camYaw -= rotX*0.01;
+        camera.lookAt(Math.sin(camYaw), 2, Math.cos(camYaw));
+    }
+
+    // ================================
+    // FLASHLIGHT FLICKER
+    // ================================
+    let flickStage = 0;
+    let flickStart = 0;
+
+    // ================================
+    // RESIZE
+    // ================================
+    function resize(){
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        uiCanvas.width = window.innerWidth;
+        uiCanvas.height = window.innerHeight;
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // ================================
+    // RENDER LOOP
+    // ================================
+    function animate(){
+        requestAnimationFrame(animate);
+        applyCameraRotation();
+
+        let ambient = 0.2;
+        const now = performance.now();
+        if (flickStage === 1){
+            ambient = 0.2 + Math.random()*0.8;
+            if (now - flickStart > 100){ flickStage = 2; flickStart = now; }
+        } else if (flickStage === 2){
+            ambient = 0.4 + Math.random()*0.4;
+            if (now - flickStart > 200) flickStage = 0;
+        }
+        ambientLight.intensity = ambient;
+
+        drawTabletUI();
+        renderer.render(scene, camera);
+    }
+
+    animate();
+};
+</script>
